@@ -197,27 +197,27 @@ class AdaptiveSupConLoss(nn.Module):
         N = features.shape[0]
 
         z         = F.normalize(features, p=2, dim=1)
-        sim       = torch.matmul(z, z.T) / self.temperature          # [N, N]
+        sim       = torch.matmul(z, z.T) / self.temperature
+        # clamp before any masking to prevent inf/-inf propagation
+        sim       = torch.clamp(sim, min=-50.0, max=50.0)
         self_mask = torch.eye(N, dtype=torch.bool, device=device)
 
         labels   = labels.view(-1)
         pos_mask = (labels.unsqueeze(0) == labels.unsqueeze(1)) & ~self_mask
+        num_pos  = pos_mask.sum(dim=1).float()
+        valid    = num_pos > 0
 
-        num_pos = pos_mask.sum(dim=1).float()
-        valid   = num_pos > 0
-
-        # logsumexp over all non-self pairs (never fill non-self with -inf here)
-        sim_no_self = sim.masked_fill(self_mask, float("-inf"))
-        log_prob    = sim_no_self - torch.logsumexp(sim_no_self, dim=1, keepdim=True)
-
-        # guard: if logsumexp produced -inf (degenerate batch), skip
-        if torch.isnan(log_prob).any() or torch.isinf(log_prob).all():
+        if not valid.any():
+            # batch has only one class — nothing to contrast
             return torch.tensor(0.0, device=device, requires_grad=True)
+
+        sim_no_self = sim.masked_fill(self_mask, -50.0)
+        log_prob    = sim_no_self - torch.logsumexp(sim_no_self, dim=1, keepdim=True)
 
         mean_log_prob_pos = (pos_mask.float() * log_prob).sum(dim=1) / (num_pos + 1e-8)
         loss = -mean_log_prob_pos[valid].mean()
 
-        return loss if not torch.isnan(loss) else torch.tensor(0.0, device=device, requires_grad=True)
+        return loss
 
 # ── Contrastive training step ─────────────────────────────────────────────────
 
