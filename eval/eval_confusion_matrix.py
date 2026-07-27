@@ -1,35 +1,12 @@
 """
-Standalone, read-only evaluation script for the drone-threat fusion classifiers.
+Read-only eval: compares deployed fusion_model.pkl (LogisticRegression) against
+orphaned xgboostmodel.pkl (XGBoost) on master_snapshots_1000.parquet. Does not
+import or modify train_fusion_step, ModalityFusionTransformer, or any training code.
 
-Compares the deployed LogisticRegression model (ARL/fusion_model.pkl) against
-the orphaned XGBoost model (ARL/xgboostmodel.pkl) on the same held-out dataset
-(ARL/master_snapshots_1000.parquet), producing confusion matrices,
-classification reports, and poster-ready heatmap PNGs for both.
-
-This script only loads pickled models and calls .predict() on them. It does
-NOT import, call, or modify train_fusion_step, ModalityFusionTransformer, or
-any other training code.
-
-Feature construction mirrors train_FS_MODEL's feature_cols exactly (see
-RF_Classification_Final.ipynb):
-
-    sensor_cols = [col for col in df.columns if "sensor" in col]
-    feature_cols = ["rf_confidence", "audio_mambo", "audio_bebop",
-                     "audio_background", "visual_confidence"] + sensor_cols
-
-master_snapshots_1000.parquet stores the nested pre-fusion format (raw
-per-sensor rf_logits/au_logits/vs_logits in "sensor_list") rather than those
-flat columns directly, so this script rebuilds them here using the exact same
-derivation the live pipeline uses to produce them (see set_master_snapshot_default,
-drone_movement_and_detection, run_audio_detection, run_visual_detection, and
-get_aggregate in RF_Classification_Final.ipynb):
-  - rf_confidence: % of sensors that are RF-triggered AND whose
-    softmax(rf_logits) threat probability is >= 0.5
-  - audio_mambo/bebop/background: softmax(au_logits) * 100 at the nearest sensor
-  - visual_confidence: vs_logits (already a sigmoid probability) at the nearest sensor
-  - sensor_{i}_threat_conf / sensor_{i}_friendly_conf: softmax(rf_logits) for
-    sensor i, or (0.0, 0.0) if that sensor wasn't RF-triggered (matches the
-    live pipeline, which only runs the RF model's softmax for triggered sensors)
+Rebuilds the same 51-feature vector as train_FS_MODEL's feature_cols
+(RF_Classification_Final.ipynb), since the parquet stores raw per-sensor
+rf_logits/au_logits/vs_logits rather than those flat columns directly. See
+build_feature_vector() below for the exact derivation.
 """
 import argparse
 import pickle
@@ -44,9 +21,10 @@ from matplotlib.colors import LinearSegmentedColormap
 from sklearn.metrics import classification_report, confusion_matrix
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_PARQUET_PATH = SCRIPT_DIR / "ARL" / "master_snapshots_1000.parquet"
-DEFAULT_FUSION_MODEL_PATH = SCRIPT_DIR / "ARL" / "fusion_model.pkl"
-DEFAULT_XGB_MODEL_PATH = SCRIPT_DIR / "ARL" / "xgboostmodel.pkl"
+REPO_ROOT = SCRIPT_DIR.parent
+DEFAULT_PARQUET_PATH = REPO_ROOT / "ARL" / "master_snapshots_1000.parquet"
+DEFAULT_FUSION_MODEL_PATH = REPO_ROOT / "ARL" / "fusion_model.pkl"
+DEFAULT_XGB_MODEL_PATH = REPO_ROOT / "ARL" / "xgboostmodel.pkl"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR
 
 NUM_SENSORS = 23
